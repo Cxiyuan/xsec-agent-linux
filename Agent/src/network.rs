@@ -341,7 +341,7 @@ impl NetworkMonitor {
                         remote_addr: remote_parts.0,
                         remote_port: remote_port,
                         state: state.clone(),
-                        direction,
+                        direction: direction.clone(),
                     });
 
                     entry.total_connections += 1;
@@ -462,7 +462,7 @@ impl NetworkMonitor {
                         let fd_path = format!("/proc/{}/fd", pid);
                         if let Ok(fd_entries) = std::fs::read_dir(&fd_path) {
                             for fd_entry in fd_entries.filter_map(|e| e.ok()) {
-                                if let Ok(link) = fd_entry.read_link() {
+                                if let Ok(link) = std::fs::read_link(fd_entry.path()) {
                                     let link_str = link.to_string_lossy();
                                     if link_str.contains(&format!("socket:[{}]", inode)) {
                                         return Some(pid);

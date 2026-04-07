@@ -246,7 +246,7 @@ impl InjectionDetector {
                         let fd_path = format!("/proc/{}/fd", accessor_pid);
                         if let Ok(fd_entries) = std::fs::read_dir(&fd_path) {
                             for fd_entry in fd_entries.filter_map(|e| e.ok()) {
-                                if let Ok(link) = fd_entry.read_link() {
+                                if let Ok(link) = std::fs::read_link(fd_entry.path()) {
                                     let link_str = link.to_string_lossy();
                                     if link_str.contains(&format!("/proc/{}/mem", pid)) 
                                         || link_str.contains(&format!("/proc/{}/", pid)) {
