@@ -172,7 +172,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${BIN_DIR}/${AGENT_NAME} --config ${CONFIG_DIR}/config.toml
+ExecStart=${BIN_DIR}/${AGENT_NAME} --daemon --config ${CONFIG_DIR}/config.toml
 ExecReload=/bin/kill -HUP \$MAINPID
 KillMode=mixed
 TimeoutStopSec=5
