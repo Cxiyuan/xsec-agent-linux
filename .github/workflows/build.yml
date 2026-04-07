@@ -15,48 +15,46 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Rust
+      - name: Setup Rust with musl target
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ./ -> target
+          targets: x86_64-unknown-linux-musl
 
-      - name: Build release
+      - name: Build static release
         run: |
           cd Agent
-          cargo build --release
+          # 使用 musl 目标编译静态二进制，兼容所有 Linux
+          cargo build --release --target x86_64-unknown-linux-musl
 
-      - name: Build single installer
+      - name: Build installer
         run: |
           cd Agent
+          mkdir -p ../dist
           
-          # 创建单个自解压安装包
-          INSTALLER="xsec-agent-1.0.0-linux-x86_64.sh"
+          INSTALLER="../dist/xsec-agent-1.0.0-linux-x86_64.sh"
           
-          # 复制安装脚本作为基础
-          cp scripts/install.sh ../$INSTALLER
+          # 复制安装脚本
+          cp scripts/install.sh "$INSTALLER"
           
           # 添加标记和二进制
-          echo "" >> ../$INSTALLER
-          echo "---BINARY END---" >> ../$INSTALLER
-          base64 -w0 target/release/xsec-agent >> ../$INSTALLER
+          echo "" >> "$INSTALLER"
+          echo "---BINARY END---" >> "$INSTALLER"
+          # 使用静态编译的二进制
+          base64 -w0 target/x86_64-unknown-linux-musl/release/xsec-agent >> "$INSTALLER"
           
-          # 添加执行权限
-          chmod +x ../$INSTALLER
+          chmod +x "$INSTALLER"
           
-          ls -la ../$INSTALLER
+          echo "构建完成: $(du -h "$INSTALLER" | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: xsec-agent-linux-installer
-          path: xsec-agent-1.0.0-linux-x86_64.sh
+          path: dist/xsec-agent-1.0.0-linux-x86_64.sh
           retention-days: 30
 
       - name: Create Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          files: xsec-agent-1.0.0-linux-x86_64.sh
+          files: dist/xsec-agent-1.0.0-linux-x86_64.sh
