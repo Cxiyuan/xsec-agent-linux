@@ -30,15 +30,14 @@ jobs:
 
       - name: Build installer script
         run: |
-          cd Agent
-          mkdir -p ../dist
+          mkdir -p dist
           
           # Create self-extracting installer
-          cp ../scripts/install.sh ../dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
-          echo "" >> ../dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
-          echo "---BINARY END---" >> ../dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
-          base64 -w0 < target/release/xsec-agent >> ../dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
-          chmod +x ../dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
+          cp Agent/scripts/install.sh dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
+          echo "" >> dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
+          echo "---BINARY END---" >> dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
+          base64 -w0 < Agent/target/release/xsec-agent >> dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
+          chmod +x dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
