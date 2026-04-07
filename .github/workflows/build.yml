@@ -28,30 +28,35 @@ jobs:
           cd Agent
           cargo build --release
 
-      - name: Build installer script
+      - name: Build single installer
         run: |
-          mkdir -p dist
+          cd Agent
           
-          # Create self-extracting installer
-          cp Agent/scripts/install.sh dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
-          echo "" >> dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
-          echo "---BINARY END---" >> dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
-          base64 -w0 < Agent/target/release/xsec-agent >> dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
-          chmod +x dist/xsec-agent-${VERSION:-1.0.0}-linux-x86_64.sh
+          # 创建单个自解压安装包
+          INSTALLER="xsec-agent-1.0.0-linux-x86_64.sh"
+          
+          # 复制安装脚本作为基础
+          cp scripts/install.sh ../$INSTALLER
+          
+          # 添加标记和二进制
+          echo "" >> ../$INSTALLER
+          echo "---BINARY END---" >> ../$INSTALLER
+          base64 -w0 target/release/xsec-agent >> ../$INSTALLER
+          
+          # 添加执行权限
+          chmod +x ../$INSTALLER
+          
+          ls -la ../$INSTALLER
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xsec-agent-linux
-          path: |
-            dist/xsec-agent-*-linux-x86_64.sh
-            Agent/target/release/xsec-agent
+          name: xsec-agent-linux-installer
+          path: xsec-agent-1.0.0-linux-x86_64.sh
           retention-days: 30
 
       - name: Create Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            dist/xsec-agent-*-linux-x86_64.sh
-            Agent/target/release/xsec-agent
+          files: xsec-agent-1.0.0-linux-x86_64.sh
