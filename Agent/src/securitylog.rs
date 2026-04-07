@@ -176,8 +176,9 @@ impl LogCollector {
 
         for log_path in auth_logs {
             if let Ok(entries) = self.read_linux_log(log_path) {
+                let count = entries.len();
                 self.entries.extend(entries);
-                *self.stats.by_source.entry(log_path.to_string()).or_insert(0) += entries.len() as u64;
+                *self.stats.by_source.entry(log_path.to_string()).or_insert(0) += count as u64;
             }
         }
     }

@@ -139,7 +139,7 @@ impl HiddenProcessDetector {
                     && proc_name != exe_name.replace(" (deleted)", "") {
                     results.push(HiddenProcessResult {
                         pid: pid_u32,
-                        name: proc_name,
+                        name: proc_name.clone(),
                         detection_method: format!("进程名 '{}' 与可执行文件 '{}' 不匹配(文件已删除)", proc_name, exe_name),
                         severity: HiddenLevel::Suspicious,
                     });
@@ -212,7 +212,7 @@ impl HiddenProcessDetector {
         
         if let Ok(entries) = std::fs::read_dir("/proc") {
             for entry in entries.filter_map(|e| e.ok()) {
-                if let Ok(name) = entry.file_name().to_str().to_owned() {
+                if let Some(name) = entry.file_name().to_str() {
                     if let Ok(pid) = name.parse::<u32>() {
                         pids.push(pid);
                     }

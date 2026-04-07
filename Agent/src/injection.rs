@@ -236,7 +236,7 @@ impl InjectionDetector {
         
         if let Ok(entries) = std::fs::read_dir("/proc") {
             for entry in entries.filter_map(|e| e.ok()) {
-                if let Ok(name_str) = entry.file_name().to_str().to_owned() {
+                if let Some(name_str) = entry.file_name().to_str() {
                     if let Ok(accessor_pid) = name_str.parse::<u32>() {
                         if accessor_pid == pid {
                             continue;

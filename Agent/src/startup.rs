@@ -287,7 +287,7 @@ impl StartupMonitor {
                     
                     items.push(StartupItem {
                         name,
-                        path: line.clone(),
+                        path: line.to_string(),
                         item_type: StartupType::Cron,
                         enabled: true,
                         user: parts[4].to_string(),
@@ -318,7 +318,7 @@ impl StartupMonitor {
 
                                 items.push(StartupItem {
                                     name,
-                                    path: line.clone(),
+                                    path: line.to_string(),
                                     item_type: StartupType::Cron,
                                     enabled: true,
                                     user: parts[4].to_string(),

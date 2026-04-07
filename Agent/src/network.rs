@@ -443,7 +443,7 @@ impl NetworkMonitor {
             0x04 => ConnectionState::FIN_WAIT,
             0x05 => ConnectionState::FIN_WAIT,
             0x06 => ConnectionState::TIME_WAIT,
-            0x07 => ConnectionState::CLOSE,
+            0x07 => ConnectionState::CLOSING,
             0x08 => ConnectionState::LAST_ACK,
             0x09 => ConnectionState::CLOSING,
             0x0A => ConnectionState::LISTEN,
@@ -457,7 +457,7 @@ impl NetworkMonitor {
         // 遍历 /proc/*/fd/* 寻找匹配的socket inode
         if let Ok(entries) = std::fs::read_dir("/proc") {
             for entry in entries.filter_map(|e| e.ok()) {
-                if let Ok(dir_name) = entry.file_name().to_str().to_owned() {
+                if let Some(dir_name) = entry.file_name().to_str() {
                     if let Ok(pid) = dir_name.parse::<u32>() {
                         let fd_path = format!("/proc/{}/fd", pid);
                         if let Ok(fd_entries) = std::fs::read_dir(&fd_path) {
