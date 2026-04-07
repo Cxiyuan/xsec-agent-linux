@@ -225,7 +225,7 @@ impl HiddenProcessDetector {
 
     #[cfg(target_os = "linux")]
     fn get_proc_name(&self, pid: u32) -> String {
-        std::fs::read_to_string(format!("/proc/{}/comm"))
+        std::fs::read_to_string(format!("/proc/{}/comm", pid))
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|_| format!("PID_{}", pid))
     }
