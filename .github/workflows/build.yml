@@ -15,30 +15,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install musl cross-compilation tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev pkg-config libssl-dev
-
-      - name: Setup Rust with musl target
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
 
-      - name: Build static release
-        env:
-          OPENSSL_LIB_DIR: /usr/lib/x86_64-linux-gnu
-          OPENSSL_INCLUDE_DIR: /usr/include
-          OPENSSL_DIR: /usr
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./ -> target
+
+      - name: Build release
         run: |
           cd Agent
-          # 清理之前的构建缓存
-          cargo clean
-          # 使用 x86_64-linux-gnu 作为 OpenSSL 基础，交叉编译 musl
-          PKG_CONFIG_ALLOW_CROSS=1 \
-          OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu \
-          OPENSSL_INCLUDE_DIR=/usr/include \
-          cargo build --release --target x86_64-unknown-linux-musl
+          cargo build --release
 
       - name: Build installer
         run: |
@@ -53,8 +41,7 @@ jobs:
           # 添加标记和二进制
           echo "" >> "$INSTALLER"
           echo "---BINARY END---" >> "$INSTALLER"
-          # 使用静态编译的二进制
-          base64 -w0 target/x86_64-unknown-linux-musl/release/xsec-agent >> "$INSTALLER"
+          base64 -w0 target/release/xsec-agent >> "$INSTALLER"
           
           chmod +x "$INSTALLER"
           
