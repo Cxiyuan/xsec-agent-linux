@@ -85,7 +85,7 @@ interactive_config() {
     # Manager 地址
     while true; do
         read -p "请输入 Manager 服务端 IP 地址: " MANAGER_HOST
-        if [[ -z "$MANMANAGER_HOST" ]]; then
+        if [[ -z "$MANAGER_HOST" ]]; then
             log_warn "地址不能为空"
         elif [[ ! "$MANAGER_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             log_warn "请输入有效的 IP 地址格式 (如: 192.168.1.100)"
