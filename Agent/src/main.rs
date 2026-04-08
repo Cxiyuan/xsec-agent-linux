@@ -380,11 +380,15 @@ fn run_daemon_mode() {
 fn extract_config_value(content: &str, key: &str) -> Option<String> {
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with(&format!("{}=", key)) {
-            let value = line.split('=').nth(1)?.trim();
-            // 去掉引号
-            let value = value.trim_matches('"').trim_matches('\'');
-            return Some(value.to_string());
+        // 支持 "key = value" 或 "key=value" 格式
+        if let Some(eq_pos) = line.find('=') {
+            let line_key = line[..eq_pos].trim();
+            if line_key == key {
+                let value = line[eq_pos+1..].trim();
+                // 去掉引号
+                let value = value.trim_matches('"').trim_matches('\'');
+                return Some(value.to_string());
+            }
         }
     }
     None
