@@ -327,7 +327,7 @@ fn run_daemon_mode() {
         println!("[xsec-agent] 尝试连接 Manager...");
         match client.connect() {
             Ok(_) => {
-                println!("[xsec-agent] 已连接到 Manager");
+                println!("[xsec-agent] 已连接到 Manager，准备发送注册消息...");
                 break;
             }
             Err(e) => {
@@ -335,6 +335,29 @@ fn run_daemon_mode() {
                 std::thread::sleep(std::time::Duration::from_secs(5));
             }
         }
+    }
+    
+    // 发送注册消息
+    println!("[xsec-agent] 发送注册消息...");
+    let hostname = hostname::get().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let register_msg = create_register_message(
+        client.get_config().agent_id.clone(),
+        hostname,
+    );
+    if let Err(e) = client.send_message(&register_msg) {
+        eprintln!("[xsec-agent] 注册消息发送失败: {:?}, 5秒后重试...", e);
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        // 重连
+        loop {
+            match client.connect() {
+                Ok(_) => break,
+                Err(e) => {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                }
+            }
+        }
+    } else {
+        println!("[xsec-agent] 注册消息发送成功!");
     }
     
     // 主循环 - 发送心跳
