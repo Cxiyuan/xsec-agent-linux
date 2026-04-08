@@ -154,6 +154,7 @@ impl Client {
         
         // 格式: <signature_hex> <json_payload>
         let packet = format!("{} {}\n", signature, json);
+        eprintln!("[DEBUG] Sending packet: {} {}", signature, &json[..json.len().min(100)]);
         
         let mut stream = self.stream.lock().unwrap();
         if let Some(ref mut s) = *stream {
