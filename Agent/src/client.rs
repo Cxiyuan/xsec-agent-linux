@@ -142,6 +142,7 @@ impl Client {
     /// 发送消息（使用 Manager 期望的协议格式）
     pub fn send_message(&self, msg: &Message) -> Result<(), ClientError> {
         // 将消息序列化为 JSON
+        eprintln!("[DEBUG] Preparing to send message type: {:?}", msg.msg_type);
         let json = serde_json::to_string(msg)
             .map_err(|e| ClientError::SerializationError(e.to_string()))?;
         
