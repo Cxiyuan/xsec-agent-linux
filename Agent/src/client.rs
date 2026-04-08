@@ -144,7 +144,10 @@ impl Client {
         eprintln!("[DEBUG send] Starting to send message");
         // 将消息序列化为 JSON
         let json = serde_json::to_string(msg)
-            .map_err(|e| ClientError::SerializationError(e.to_string()))?;
+            .map_err(|e| {
+                eprintln!("[DEBUG] JSON serialization error: {}", e);
+                ClientError::SerializationError(e.to_string())
+            })?;
         
         // 计算 HMAC-SHA256 签名
         use hmac_sha256::HMAC;
