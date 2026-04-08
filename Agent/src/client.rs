@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::protocol::{
     self, AgentInfo, CommandPayload, CommandResultPayload, ConfigPayload,
-    ControlPayload, HeartbeatData, Message, MessagePayload, ResponsePolicyPayload,
+    ControlPayload, HeartbeatData, ManagerIncoming, Message, MessagePayload, ResponsePolicyPayload,
     StatusPayload, ThreatReportPayload,
 };
 
@@ -141,13 +141,9 @@ impl Client {
 
     /// 发送消息（使用 Manager 期望的协议格式）
     pub fn send_message(&self, msg: &Message) -> Result<(), ClientError> {
-        eprintln!("[DEBUG send] Starting to send message");
-        // 将消息序列化为 JSON
-        let json = serde_json::to_string(msg)
-            .map_err(|e| {
-                eprintln!("[DEBUG] JSON serialization error: {}", e);
-                ClientError::SerializationError(e.to_string())
-            })?;
+        // 将消息转换为 Manager 期望的扁平 JSON 格式
+        let json = msg.to_manager_json()
+            .map_err(|e| ClientError::SerializationError(e.to_string()))?;
         
         // 计算 HMAC-SHA256 签名
         use hmac_sha256::HMAC;
@@ -157,12 +153,15 @@ impl Client {
         let signature = signature_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
         
         // 格式: <signature_hex> <json_payload>
-        let packet = format!("{} {}\n", signature, json);
-        eprintln!("[DEBUG] Sending packet: {} {}", signature, &json[..json.len().min(100)]);
+        let packet = format!("{} {}", signature, json);
+        
+        // 添加 4 字节大端部长度前缀
+        let len = (packet.len() as u32).to_be_bytes();
+        let frame: Vec<u8> = len.iter().chain(packet.as_bytes().iter()).copied().collect();
         
         let mut stream = self.stream.lock().unwrap();
         if let Some(ref mut s) = *stream {
-            s.write_all(packet.as_bytes())
+            s.write_all(&frame)
                 .map_err(|e| ClientError::SendFailed(e.to_string()))?;
             s.flush()
                 .map_err(|e| ClientError::SendFailed(e.to_string()))?;
@@ -174,33 +173,66 @@ impl Client {
 
     /// 接收消息（使用 Manager 期望的协议格式）
     pub fn recv_message(&self) -> Result<Message, ClientError> {
-        use std::io::{BufRead, BufReader};
-        
         let mut stream = self.stream.lock().unwrap();
         if let Some(ref mut s) = *stream {
-            let mut reader = BufReader::new(s);
-            
-            // 读取一行，格式: <signature_hex> <json_payload>
-            let mut line = String::new();
-            reader.read_line(&mut line)
+            // 读取 4 字节长度头
+            let mut len_buf = [0u8; 4];
+            s.read_exact(&mut len_buf)
                 .map_err(|e| ClientError::ReceiveFailed(e.to_string()))?;
+            let length = u32::from_be_bytes(len_buf) as usize;
             
-            // 解析: signature payload
-            let parts: Vec<&str> = line.trim().splitn(2, ' ').collect();
-            if parts.len() != 2 {
-                return Err(ClientError::ProtocolError("Invalid message format".to_string()));
+            if length > 10 * 1024 * 1024 {
+                return Err(ClientError::ProtocolError("Message too large".to_string()));
             }
             
-            let _signature = parts[0];
-            let json_payload = parts[1];
+            // 读取完整帧
+            let mut frame = vec![0u8; length];
+            s.read_exact(&mut frame)
+                .map_err(|e| ClientError::ReceiveFailed(e.to_string()))?;
             
-            // 验证 HMAC（简单起见，这里跳过验证，仅解析）
-            // 实际生产环境应验证 signature
+            // 解析: <signature_hex> <json_payload>
+            let space_idx = frame.iter().position(|&b| b == b' ')
+                .ok_or_else(|| ClientError::ProtocolError("Invalid frame format".to_string()))?;
             
-            // 解析 JSON 消息
-            let msg = serde_json::from_str(json_payload)
+            let _signature = String::from_utf8_lossy(&frame[..space_idx]);
+            let json_payload = &frame[space_idx + 1..];
+            
+            // 解析 JSON 消息（扁平格式）
+            let incoming: ManagerIncoming = serde_json::from_slice(json_payload)
                 .map_err(|e| ClientError::SerializationError(e.to_string()))?;
-            Ok(msg)
+            
+            incoming.to_message()
+                .ok_or_else(|| ClientError::ProtocolError("Unknown message type".to_string()))
+        } else {
+            Err(ClientError::NotConnected)
+        }
+    }
+
+    /// 接收 Manager 发送的原始消息
+    pub fn recv_manager_message(&self) -> Result<ManagerIncoming, ClientError> {
+        let mut stream = self.stream.lock().unwrap();
+        if let Some(ref mut s) = *stream {
+            let mut len_buf = [0u8; 4];
+            s.read_exact(&mut len_buf)
+                .map_err(|e| ClientError::ReceiveFailed(e.to_string()))?;
+            let length = u32::from_be_bytes(len_buf) as usize;
+            
+            if length > 10 * 1024 * 1024 {
+                return Err(ClientError::ProtocolError("Message too large".to_string()));
+            }
+            
+            let mut frame = vec![0u8; length];
+            s.read_exact(&mut frame)
+                .map_err(|e| ClientError::ReceiveFailed(e.to_string()))?;
+            
+            let space_idx = frame.iter().position(|&b| b == b' ')
+                .ok_or_else(|| ClientError::ProtocolError("Invalid frame format".to_string()))?;
+            
+            let json_payload = &frame[space_idx + 1..];
+            
+            let incoming: ManagerIncoming = serde_json::from_slice(json_payload)
+                .map_err(|e| ClientError::SerializationError(e.to_string()))?;
+            Ok(incoming)
         } else {
             Err(ClientError::NotConnected)
         }
@@ -313,6 +345,11 @@ impl Client {
     /// 获取连接状态
     pub fn get_state(&self) -> ConnectionState {
         self.state.lock().unwrap().clone()
+    }
+
+    /// 获取配置
+    pub fn get_config(&self) -> &ManagerConfig {
+        &self.config
     }
 
     fn set_state(&self, state: ConnectionState) {

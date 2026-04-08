@@ -34,7 +34,7 @@ pub use memfeature::{format_memory_features, MemoryFeatureDetector, ProcessMemor
 pub use realtime::{RealtimeMonitor, MonitorConfig, MonitorStats, format_monitor_stats, format_monitor_config};
 pub use command::{CommandExecutor, CommandRequest, CommandResult, CommandWhitelist, format_command_result};
 pub use response::{ResponseEngine, ResponseRule, ResponseAction, ResponseResult, ResponseLevel, format_response_results, format_response_rules};
-pub use protocol::{Message, MsgType, AgentInfo, HeartbeatData, ThreatReportPayload, CommandPayload, CommandResultPayload, ResponsePolicyPayload, create_register_message, create_heartbeat_message, create_threat_message, create_command_result_message, create_status_message};
+pub use protocol::{Message, MsgType, AgentInfo, HeartbeatData, ThreatReportPayload, CommandPayload, CommandResultPayload, ResponsePolicyPayload, create_register_message, create_register_message_simple, create_heartbeat_message, create_threat_message, create_command_result_message, create_status_message};
 pub use client::{Client, ManagerConfig, ConnectionState, ClientError};
 pub use securitylog::{LogCollector, LogEntry, LogLevel, SecurityEvent, SecurityEventType, format_security_events, format_log_entries};
 pub use fim::{FimMonitor, FimReport, MonitoredItem, FileSnapshot, FileChangeEvent, RiskLevel, format_fim_report, format_change_events};
@@ -340,9 +340,9 @@ fn run_daemon_mode() {
     // 发送注册消息
     println!("[xsec-agent] 发送注册消息...");
     let hostname = hostname::get().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    let register_msg = create_register_message(
-        client.get_config().agent_id.clone(),
-        hostname,
+    let register_msg = create_register_message_simple(
+        &client.get_config().agent_id,
+        &hostname,
     );
     if let Err(e) = client.send_message(&register_msg) {
         eprintln!("[xsec-agent] 注册消息发送失败: {:?}, 5秒后重试...", e);
