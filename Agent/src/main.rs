@@ -291,11 +291,15 @@ pub fn format_rate(bytes_per_sec: u64) -> String {
 // Daemon 模式
 // ============================================================================
 
-fn run_daemon_mode() {
+fn run_daemon_mode(config_path: String) {
     println!("[xsec-agent] 启动 Daemon 模式...");
+    println!("[xsec-agent] 使用配置文件: {}", config_path);
     
     // 读取配置
-    let config_path = "/etc/xsec-agent/config.toml";
+    let config_content = std::fs::read_to_string(&config_path).unwrap_or_else(|e| {
+        eprintln!("[xsec-agent] 配置文件读取失败: {}", e);
+        std::process::exit(1);
+    });
     let config_content = std::fs::read_to_string(config_path).unwrap_or_default();
     
     // 简单的配置解析
@@ -424,9 +428,20 @@ fn extract_config_value(content: &str, key: &str) -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     
+    // 解析命令行参数
+    let mut config_path = "/etc/xsec/config.toml".to_string();
+    
+    for (i, arg) in args.iter().enumerate() {
+        if *arg == "--config" || *arg == "-c" {
+            if i + 1 < args.len() {
+                config_path = args[i + 1].clone();
+            }
+        }
+    }
+    
     // 检查 daemon 模式
     if args.contains(&"--daemon".to_string()) || args.contains(&"-d".to_string()) {
-        run_daemon_mode();
+        run_daemon_mode(config_path);
         return;
     }
     
