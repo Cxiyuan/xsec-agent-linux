@@ -34,7 +34,7 @@ pub use memfeature::{format_memory_features, MemoryFeatureDetector, ProcessMemor
 pub use realtime::{RealtimeMonitor, MonitorConfig, MonitorStats, format_monitor_stats, format_monitor_config};
 pub use command::{CommandExecutor, CommandRequest, CommandResult, CommandWhitelist, format_command_result};
 pub use response::{ResponseEngine, ResponseRule, ResponseAction, ResponseResult, ResponseLevel, format_response_results, format_response_rules};
-pub use protocol::{Message, MsgType, AgentInfo, HeartbeatData, ThreatReportPayload, CommandPayload, CommandResultPayload, ResponsePolicyPayload, create_register_message, create_register_message_simple, create_heartbeat_message, create_threat_message, create_command_result_message, create_status_message};
+pub use protocol::{Message, MsgType, AgentInfo, HeartbeatData, ThreatReportPayload, CommandPayload, CommandResultPayload, ResponsePolicyPayload, EnvironmentInfo, DiskInfo, PortInfo, create_register_message, create_register_message_simple, create_heartbeat_message, create_threat_message, create_command_result_message, create_status_message};
 pub use client::{Client, ManagerConfig, ConnectionState, ClientError};
 pub use securitylog::{LogCollector, LogEntry, LogLevel, SecurityEvent, SecurityEventType, format_security_events, format_log_entries};
 pub use fim::{FimMonitor, FimReport, MonitoredItem, FileSnapshot, FileChangeEvent, RiskLevel, format_fim_report, format_change_events};
@@ -245,6 +245,159 @@ impl Default for SystemMonitor {
     }
 }
 
+impl SystemMonitor {
+    /// 采集详细环境信息
+    pub fn collect_environment(&mut self) -> EnvironmentInfo {
+        // CPU 信息
+        let cpus = self.sys.cpus();
+        let cpu_model = if let Some(cpu) = cpus.first() {
+            cpu.brand().to_string()
+        } else {
+            "Unknown".to_string()
+        };
+        let cpu_cores = cpus.len() as u32;
+        let cpu_frequency = if let Some(cpu) = cpus.first() {
+            format!("{:.0} MHz", cpu.frequency())
+        } else {
+            "N/A".to_string()
+        };
+        
+        // 内存信息
+        let memory_total = self.sys.total_memory();
+        let memory_usable = self.sys.available_memory();
+        
+        // 磁盘信息
+        let disks = Disks::new_with_refreshed_list();
+        let disk_info: Vec<DiskInfo> = disks.iter().map(|disk| {
+            let total = disk.total_space();
+            let available = disk.available_space();
+            DiskInfo {
+                name: disk.name().to_string_lossy().to_string(),
+                mount: disk.mount_point().to_string_lossy().to_string(),
+                total,
+                available,
+                used: total.saturating_sub(available),
+            }
+        }).collect();
+        
+        // 监听端口 - 通过读取 /proc/net/tcp 和 /proc/net/udp
+        let ports = self.collect_listening_ports();
+        
+        // 操作系统版本和内核
+        let os_version = System::name().unwrap_or_else(|| "Unknown".to_string());
+        let kernel = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+        
+        EnvironmentInfo {
+            cpu_model,
+            cpu_cores,
+            cpu_frequency,
+            memory_total,
+            memory_usable,
+            disk_info,
+            ports,
+            os_version,
+            kernel,
+        }
+    }
+    
+    /// 采集监听端口
+    fn collect_listening_ports(&self) -> Vec<PortInfo> {
+        let mut ports: Vec<PortInfo> = Vec::new();
+        
+        // 读取 TCP 监听端口
+        if let Ok(tcp_content) = std::fs::read_to_string("/proc/net/tcp") {
+            for line in tcp_content.lines().skip(1) {
+                if let Some(port_info) = self.parse_proc_net_line(line, "tcp") {
+                    ports.push(port_info);
+                }
+            }
+        }
+        
+        // 读取 UDP 监听端口
+        if let Ok(udp_content) = std::fs::read_to_string("/proc/net/udp") {
+            for line in udp_content.lines().skip(1) {
+                if let Some(port_info) = self.parse_proc_net_line(line, "udp") {
+                    ports.push(port_info);
+                }
+            }
+        }
+        
+        ports
+    }
+    
+    /// 解析 /proc/net/tcp 或 /proc/net/udp 行
+    fn parse_proc_net_line(&self, line: &str, protocol: &str) -> Option<PortInfo> {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 10 {
+            return None;
+        }
+        
+        // 本地地址格式: IP:PORT (hex)
+        let local_addr = parts[1];
+        let addr_parts: Vec<&str> = local_addr.split(':').collect();
+        if addr_parts.len() != 2 {
+            return None;
+        }
+        
+        // 端口 (hex to u16)
+        let port_hex = addr_parts[1];
+        let port = u16::from_str_radix(port_hex, 16).ok()?;
+        
+        // 跳过非监听状态 (状态 0A = LISTEN)
+        let state = u8::from_str_radix(parts[3], 16).unwrap_or(0);
+        if protocol == "tcp" && state != 0x0A {
+            return None;
+        }
+        
+        // inode -> PID 映射
+        let inode = parts[9].parse::<u64>().ok()?;
+        let program = self.find_process_by_inode(inode);
+        let pid = self.find_pid_by_inode(inode);
+        
+        Some(PortInfo {
+            protocol: protocol.to_uppercase(),
+            port,
+            program,
+            pid,
+        })
+    }
+    
+    /// 通过 inode 查找进程名
+    fn find_process_by_inode(&self, inode: u64) -> String {
+        // 遍历所有进程，查找对应的 socket inode
+        for (pid, process) in self.sys.processes() {
+            if let Ok(fd_dir) = std::fs::read_dir(format!("/proc/{}/fd", pid)) {
+                for entry in fd_dir.flatten() {
+                    if let Ok(link) = std::fs::read_link(entry.path()) {
+                        let link_str = link.to_string_lossy();
+                        if link_str.contains(&inode.to_string()) {
+                            return process.name().to_string_lossy().to_string();
+                        }
+                    }
+                }
+            }
+        }
+        "unknown".to_string()
+    }
+    
+    /// 通过 inode 查找 PID
+    fn find_pid_by_inode(&self, inode: u64) -> u32 {
+        for (pid, process) in self.sys.processes() {
+            if let Ok(fd_dir) = std::fs::read_dir(format!("/proc/{}/fd", pid)) {
+                for entry in fd_dir.flatten() {
+                    if let Ok(link) = std::fs::read_link(entry.path()) {
+                        let link_str = link.to_string_lossy();
+                        if link_str.contains(&inode.to_string()) {
+                            return pid.as_u32();
+                        }
+                    }
+                }
+            }
+        }
+        0
+    }
+}
+
 // ============================================================================
 // 工具函数
 // ============================================================================
@@ -380,6 +533,7 @@ fn run_daemon_mode(config_path: String) {
             network_out: metrics.network.total_tx_bytes_per_sec,
             active_threats: 0,
             pending_commands: 0,
+            environment_info: Some(monitor.collect_environment()),
         };
         
         let heartbeat = create_heartbeat_message(&agent_id, heartbeat_data);

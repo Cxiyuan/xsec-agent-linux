@@ -143,6 +143,9 @@ impl Message {
                 map.insert("network_out".to_string(), serde_json::json!(data.network_out));
                 map.insert("active_threats".to_string(), serde_json::json!(data.active_threats));
                 map.insert("pending_commands".to_string(), serde_json::json!(data.pending_commands));
+                if let Some(ref env) = data.environment_info {
+                    map.insert("environment_info".to_string(), serde_json::json!(env));
+                }
             }
             MessagePayload::Threat(threat) => {
                 let mut data = serde_json::Map::new();
@@ -226,6 +229,38 @@ pub struct HeartbeatData {
     pub network_out: u64,      // bytes
     pub active_threats: u32,
     pub pending_commands: u32,
+    pub environment_info: Option<EnvironmentInfo>,
+}
+
+/// 环境详细信息
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EnvironmentInfo {
+    pub cpu_model: String,
+    pub cpu_cores: u32,
+    pub cpu_frequency: String,
+    pub memory_total: u64,
+    pub memory_usable: u64,
+    pub disk_info: Vec<DiskInfo>,
+    pub ports: Vec<PortInfo>,
+    pub os_version: String,
+    pub kernel: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DiskInfo {
+    pub name: String,
+    pub mount: String,
+    pub total: u64,
+    pub available: u64,
+    pub used: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PortInfo {
+    pub protocol: String,
+    pub port: u16,
+    pub program: String,
+    pub pid: u32,
 }
 
 /// 威胁报告
