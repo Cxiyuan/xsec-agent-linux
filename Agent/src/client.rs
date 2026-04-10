@@ -117,6 +117,7 @@ impl Client {
             ip: local_ip_address::local_ip()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|_| "127.0.0.1".to_string()),
+            mac: protocol::get_mac_address(),
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),

@@ -129,6 +129,7 @@ impl Message {
             MessagePayload::Register(info) => {
                 map.insert("hostname".to_string(), serde_json::Value::String(info.hostname.clone()));
                 map.insert("ip".to_string(), serde_json::Value::String(info.ip.clone()));
+                map.insert("mac".to_string(), serde_json::Value::String(info.mac.clone()));
                 map.insert("os".to_string(), serde_json::Value::String(info.os.clone()));
                 map.insert("arch".to_string(), serde_json::Value::String(info.arch.clone()));
                 map.insert("version".to_string(), serde_json::Value::String(info.version.clone()));
@@ -207,6 +208,7 @@ pub enum MessagePayload {
 pub struct AgentInfo {
     pub hostname: String,
     pub ip: String,
+    pub mac: String,           // MAC 地址
     pub os: String,            // "linux" / "windows"
     pub arch: String,          // "x86_64" / "aarch64"
     pub version: String,       // Agent 版本
@@ -406,11 +408,47 @@ pub fn create_register_message(agent_id: &str, info: AgentInfo) -> Message {
     Message::new(MsgType::AgentRegister, agent_id, MessagePayload::Register(info))
 }
 
+/// 获取本机 MAC 地址
+pub fn get_mac_address() -> String {
+    // 尝试获取第一个非-loopback 网卡的 MAC 地址
+    #[cfg(target_os = "linux")]
+    {
+        // 读取 /sys/class/net/*/address
+        if let Ok(interfaces) = std::fs::read_dir("/sys/class/net") {
+            for iface in interfaces.flatten() {
+                if let Ok(name) = std::fs::read_to_string(iface.path().join("name")) {
+                    let name = name.trim();
+                    if name != "lo" {  // 跳过 loopback
+                        if let Ok(addr) = std::fs::read_to_string(iface.path().join("address")) {
+                            let mac = addr.trim().to_uppercase();
+                            if !mac.is_empty() && mac != "00:00:00:00:00:00" {
+                                return mac;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "00:00:00:00:00:00".to_string()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Windows 上使用 getmac 或读取注册表
+        // 简化处理，返回空字符串
+        "00:00:00:00:00:00".to_string()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        "00:00:00:00:00:00".to_string()
+    }
+}
+
 /// 创建 Agent 注册消息（简便版本）
 pub fn create_register_message_simple(agent_id: &str, hostname: &str) -> Message {
     let info = AgentInfo {
         hostname: hostname.to_string(),
         ip: local_ip_address::local_ip().map(|s| s.to_string()).unwrap_or_else(|_| "127.0.0.1".to_string()),
+        mac: get_mac_address(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -473,6 +511,7 @@ mod tests {
         let msg = create_register_message("agent-001", AgentInfo {
             hostname: "test-host".to_string(),
             ip: "192.168.1.100".to_string(),
+            mac: "AA:BB:CC:DD:EE:FF".to_string(),
             os: "linux".to_string(),
             arch: "x86_64".to_string(),
             version: "0.1.0".to_string(),
