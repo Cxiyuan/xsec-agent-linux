@@ -420,14 +420,9 @@ pub fn generate_msg_id() -> String {
     format!("{:}-{:}", timestamp, random)
 }
 
-/// 生成随机数（简化版）
+/// 生成随机数（使用加密安全的随机数生成器）
 fn rand_u32() -> u32 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    let rs = RandomState::new();
-    let mut hasher = rs.build_hasher();
-    hasher.write_u64(now_timestamp() as u64);
-    hasher.finish() as u32
+    rand::random::<u32>()
 }
 
 /// 获取当前时间戳

@@ -194,10 +194,20 @@ impl Client {
             // 解析: <signature_hex> <json_payload>
             let space_idx = frame.iter().position(|&b| b == b' ')
                 .ok_or_else(|| ClientError::ProtocolError("Invalid frame format".to_string()))?;
-            
-            let _signature = String::from_utf8_lossy(&frame[..space_idx]);
+
+            let signature = String::from_utf8_lossy(&frame[..space_idx]);
             let json_payload = &frame[space_idx + 1..];
-            
+
+            // 验证 HMAC 签名
+            use hmac_sha256::HMAC;
+            let expected_sig_bytes = HMAC::mac(json_payload, self.config.secret_key.as_bytes());
+            let expected_sig = expected_sig_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+
+            if signature != expected_sig {
+                eprintln!("[SECURITY] HMAC signature mismatch: expected {}, got {}", expected_sig, signature);
+                return Err(ClientError::AuthenticationFailed);
+            }
+
             // 解析 JSON 消息（扁平格式）
             let incoming: ManagerIncoming = serde_json::from_slice(json_payload)
                 .map_err(|e| ClientError::SerializationError(e.to_string()))?;
@@ -369,6 +379,7 @@ pub enum ClientError {
     SerializationError(String),
     Timeout,
     ProtocolError(String),
+    AuthenticationFailed,
 }
 
 impl std::fmt::Display for ClientError {
@@ -382,6 +393,7 @@ impl std::fmt::Display for ClientError {
             ClientError::SerializationError(e) => write!(f, "Serialization error: {}", e),
             ClientError::Timeout => write!(f, "Connection timeout"),
             ClientError::ProtocolError(e) => write!(f, "Protocol error: {}", e),
+            ClientError::AuthenticationFailed => write!(f, "Authentication failed: HMAC signature mismatch"),
         }
     }
 }

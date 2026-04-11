@@ -1,13 +1,58 @@
 //! 基线核查执行模块
-//! 
+//!
 //! 接收来自服务端的基线核查规则并执行
 //! 不内置任何规则，所有规则由 Manager 下发
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::thread;
 use std::sync::mpsc;
+
+/// 允许执行的命令白名单（安全限制）
+/// 仅允许特定的系统监控和配置检查命令
+fn get_allowed_commands() -> HashSet<&'static str> {
+    let mut allowed = HashSet::new();
+    // 文件检查
+    allowed.insert("stat");
+    allowed.insert("ls");
+    allowed.insert("cat");
+    allowed.insert("test");
+    allowed.insert("find");
+    // 系统信息
+    allowed.insert("uname");
+    allowed.insert("hostname");
+    allowed.insert("df");
+    allowed.insert("du");
+    allowed.insert("free");
+    allowed.insert("uptime");
+    allowed.insert("who");
+    // 进程检查
+    allowed.insert("ps");
+    allowed.insert("pidof");
+    allowed.insert("pgrep");
+    allowed.insert("systemctl");
+    allowed.insert("service");
+    // 网络检查
+    allowed.insert("netstat");
+    allowed.insert("ss");
+    allowed.insert("ip");
+    allowed.insert("ifconfig");
+    // 用户检查
+    allowed.insert("id");
+    allowed.insert("sudo");
+    allowed.insert("visudo");
+    allowed.insert("chage");
+    allowed
+}
+
+/// 验证命令是否在白名单中（防止命令注入）
+fn is_command_allowed(cmd: &str) -> bool {
+    // 提取命令名称（第一个空格前的部分）
+    let cmd_name = cmd.trim().split_whitespace().next().unwrap_or("");
+    get_allowed_commands().contains(cmd_name)
+}
 
 /// 基线核查规则（由 Manager 下发）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +165,11 @@ impl BaselineChecker {
     
     /// 执行命令并返回输出（带超时控制）
     fn execute_command_with_timeout(cmd: &str, timeout: Duration) -> String {
+        // 安全检查：验证命令是否在白名单中
+        if !is_command_allowed(cmd) {
+            return format!("error: command not allowed for security reasons: {}", cmd);
+        }
+
         // FIX 19: Use kill_on_drop(true) to ensure process is killed if dropped
         let (tx, rx) = mpsc::channel();
         
