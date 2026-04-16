@@ -625,6 +625,7 @@ async fn run_daemon_mode_wss(config_path: String) {
 
     // 克隆客户端用于命令处理
     let client_for_commands = client.clone();
+    let client_for_spawn = client.clone();
     let agent_id_for_commands = agent_id.clone();
 
     // 启动命令处理任务
@@ -662,7 +663,7 @@ async fn run_daemon_mode_wss(config_path: String) {
                 data: Some(serde_json::to_value(&result_payload).unwrap_or_default()),
             };
 
-            if let Err(e) = client_for_commands.send(&result_msg).await {
+            if let Err(e) = client_for_spawn.send(&result_msg).await {
                 eprintln!("[WSS] 发送命令结果失败: {}", e);
             }
         }
