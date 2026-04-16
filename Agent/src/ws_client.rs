@@ -457,8 +457,13 @@ impl WssClient {
         let json = serde_json::to_string(msg)
             .map_err(|e| format!("JSON 序列化失败: {}", e))?;
 
-        let write_lock = self.write_tx.lock().unwrap();
-        if let Some(ref tx) = *write_lock {
+        // 在锁外执行异步操作，避免 MutexGuard 跨越 await
+        let tx = {
+            let write_lock = self.write_tx.lock().unwrap();
+            write_lock.clone()
+        };
+
+        if let Some(tx) = tx {
             tx.send(json).await
                 .map_err(|e| format!("发送消息失败: {}", e))?;
             Ok(())
