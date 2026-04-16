@@ -6,17 +6,13 @@
 //! 生产环境应使用 Let's Encrypt 证书
 
 use futures_util::{SinkExt, StreamExt};
-use rustls::{self, ClientConfig, RootCertStore};
-use rustls::client::{ServerCertVerifier, WebPkiVerifier, VerificationError, ServerTrustSettings};
+use native_tls::TlsConnector as NativeTlsConnector;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::System;
 use tokio::sync::mpsc;
-use tokio::net::TcpStream as TokioTcpStream;
-use tokio_rustls::TlsConnector;
-use tokio_tungstenite::{client_async, tungstenite::Message as WsRawMessage, Protocol};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{connect_async, tungstenite::Message as WsRawMessage, Connector};
 use url::Url;
 
 use crate::protocol::{
@@ -143,24 +139,6 @@ pub struct WssClient {
 /// 命令结果回调类型
 pub type CommandCallback = Box<dyn Fn(CommandPayload) + Send + Sync>;
 
-// 接受任意证书的验证器（仅用于开发/测试）
-#[derive(Debug)]
-struct DangerouslyAcceptInvalidCerts;
-
-impl ServerCertVerifier for DangerouslyAcceptInvalidCerts {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &ServerTrustSettings,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<ServerTrustSettings, VerificationError> {
-        Ok(ServerTrustSettings)
-    }
-}
-
 impl WssClient {
     /// 创建新的 WSS 客户端
     pub fn new(config: WsConfig, command_tx: mpsc::Sender<CommandPayload>) -> Self {
@@ -198,18 +176,12 @@ impl WssClient {
     }
 
     /// 创建接受自签名证书的 TLS 连接器
-    /// 仅用于开发/测试环境，生产环境应使用受信任的证书
-    fn create_insecure_tls_connector(&self) -> Result<TlsConnector, String> {
-        // 构建接受任意证书的 TLS 配置
-        let config = ClientConfig::builder()
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_custom_certificate_verifier(Arc::new(DangerouslyAcceptInvalidCerts))
-            .with_no_client_auth();
-
-        let tls_connector = TlsConnector::from(Arc::new(config));
-        println!("[WSS] TLS 连接器已配置为接受自签名证书");
-        Ok(tls_connector)
+    fn create_insecure_tls_connector(&self) -> Result<NativeTlsConnector, String> {
+        NativeTlsConnector::builder()
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .build()
+            .map_err(|e| format!("TLS 连接器创建失败: {}", e))
     }
 
     /// 连接并处理消息
@@ -217,38 +189,15 @@ impl WssClient {
         let url = Url::parse(&self.config.server_url)
             .map_err(|e| format!("无效的服务器 URL: {}", e))?;
 
-        let domain = url.domain().unwrap_or("localhost");
-        println!("[WSS] 连接到 {} (domain: {})", self.config.server_url, domain);
+        println!("[WSS] 连接到 {}", self.config.server_url);
 
-        // 创建接受自签名证书的 TLS 连接器
+        // 创建接受自签名证书的 native-tls 连接器
         let tls_connector = self.create_insecure_tls_connector()?;
+        let connector = Connector::NativeTls(tls_connector);
 
-        // 建立 TCP 连接
-        let tcp_stream = TokioTcpStream::connect(&*url.socket_addr().unwrap().0)
-            .await
-            .map_err(|e| format!("TCP 连接失败: {}", e))?;
-
-        // 升级到 TLS
-        let tls_stream = tls_connector.connect(domain, tcp_stream)
-            .await
-            .map_err(|e| format!("TLS 连接失败: {}", e))?;
-
-        // 构建 WebSocket 请求
-        let request = tokio_tungstenite::tungstenite::Request::builder()
-            .method("GET")
-            .uri(url.as_str())
-            .header("Host", domain)
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::generate_key())
-            .body(())
-            .map_err(|e| format!("请求构建失败: {}", e))?;
-
-        // 执行 WebSocket 握手
         let (ws_stream, _) = tokio::time::timeout(
             Duration::from_secs(self.config.connection_timeout_secs),
-            client_async(request, tls_stream),
+            connect_async(url, connector),
         )
         .await
         .map_err(|_| "连接超时")?
