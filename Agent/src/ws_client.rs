@@ -6,15 +6,14 @@
 //! 生产环境应使用 Let's Encrypt 证书
 
 use futures_util::{SinkExt, StreamExt};
-use rustls::client::danger::ServerCertVerifier;
-use rustls::ClientConfig;
+use native_tls::TlsConnector as NativeTlsConnector;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::System;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio_rustls::TlsConnector;
+use tokio_native_tls::TlsConnector;
 use tokio_tungstenite::{client_async, tungstenite::Message as WsRawMessage};
 use url::Url;
 
@@ -178,13 +177,14 @@ impl WssClient {
         }
     }
 
-    /// 创建接受自签名证书的 TLS 配置 (rustls 0.23)
-    fn create_insecure_tls_config(&self) -> Result<ClientConfig, String> {
-        // 使用 rustls 0.23 的 dangerous skip API
-        let config = ClientConfig::builder()
-            .with_custom_certificate_verifier(Arc::new(ServerCertVerifier::dangerously_skip_certificate_verification()))
-            .with_no_client_auth();
-        Ok(config)
+    /// 创建接受自签名证书的 TLS 连接器 (tokio-native-tls)
+    fn create_insecure_tls_connector(&self) -> Result<TlsConnector, String> {
+        let inner = NativeTlsConnector::builder()
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .build()
+            .map_err(|e| format!("TLS 连接器创建失败: {}", e))?;
+        Ok(TlsConnector::from(inner))
     }
 
     /// 连接并处理消息
@@ -198,12 +198,11 @@ impl WssClient {
 
         println!("[WSS] 连接到 {} (domain: {})", self.config.server_url, domain);
 
-        // 创建接受自签名证书的 TLS 配置
-        let tls_config = self.create_insecure_tls_config()?;
-        let tls_connector = TlsConnector::from(Arc::new(tls_config));
+        // 创建接受自签名证书的 TLS 连接器
+        let tls_connector = self.create_insecure_tls_connector()?;
 
         // TCP 连接
-        let tcp_stream = tokio::net::TcpStream::connect(&addr)
+        let tcp_stream = TcpStream::connect(&addr)
             .await
             .map_err(|e| format!("TCP 连接失败 ({}): {}", addr, e))?;
 
@@ -213,8 +212,8 @@ impl WssClient {
             .map_err(|e| format!("TLS 连接失败: {}", e))?;
 
         // 构建 WebSocket 请求
-        let request = tokio_tungstenite::tungstenite::Request::builder()
-            .method("GET")
+        let request = http::Request::builder()
+            .method(http::Method::GET)
             .uri(url.as_str())
             .header("Host", domain)
             .header("Connection", "Upgrade")
@@ -225,7 +224,7 @@ impl WssClient {
             .map_err(|e| format!("请求构建失败: {}", e))?;
 
         // WebSocket 握手
-        let (ws_stream, _) = tokio::time::timeout(
+        let ws_stream = tokio::time::timeout(
             Duration::from_secs(self.config.connection_timeout_secs),
             client_async(request, tls_stream),
         )

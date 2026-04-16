@@ -625,6 +625,7 @@ async fn run_daemon_mode_wss(config_path: String) {
 
     // 克隆客户端用于命令处理
     let client_for_commands = client.clone();
+    let agent_id_for_commands = agent_id.clone();
 
     // 启动命令处理任务
     tokio::spawn(async move {
@@ -657,7 +658,7 @@ async fn run_daemon_mode_wss(config_path: String) {
             // 使用 WsMessage 格式发送命令结果
             let result_msg = WsMessage {
                 msg_type: ws_client::WsMessageType::CommandResult,
-                agent_id: Some(config.agent_id.clone()),
+                agent_id: Some(agent_id_for_commands.clone()),
                 data: Some(serde_json::to_value(&result_payload).unwrap_or_default()),
             };
 
