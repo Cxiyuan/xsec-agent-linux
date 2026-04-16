@@ -6,6 +6,7 @@
 //!   3. 支持告警去重和清理策略
 
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::alert::{Alert, AlertLevel, AlertCategory};
@@ -16,25 +17,29 @@ use crate::alert::{Alert, AlertLevel, AlertCategory};
 
 pub struct AlertCache {
     db_path: String,
+    conn: Mutex<rusqlite::Connection>,
 }
 
 impl AlertCache {
     pub fn new(db_path: &str) -> std::io::Result<Self> {
+        let path = Path::new(db_path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let conn = rusqlite::Connection::open(db_path)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
         let cache = Self {
             db_path: db_path.to_string(),
+            conn: Mutex::new(conn),
         };
         cache.init_db()?;
         Ok(cache)
     }
 
     fn init_db(&self) -> std::io::Result<()> {
-        let path = Path::new(&self.db_path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let conn = rusqlite::Connection::open(&self.db_path)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let conn = self.conn.lock().unwrap();
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS alert_cache (
@@ -68,8 +73,6 @@ impl AlertCache {
         )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        // 自动释放连接 (rusqlite Connection 有 Drop)
-        drop(conn);
         Ok(())
     }
 
@@ -93,8 +96,7 @@ impl AlertCache {
             .unwrap_or_default()
             .as_secs() as i64;
 
-        let conn = rusqlite::Connection::open(&self.db_path)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let conn = self.conn.lock().unwrap();
 
         let metadata = serde_json::to_string(&alert.metadata)
             .unwrap_or_else(|_| "{}".to_string());
@@ -118,14 +120,12 @@ impl AlertCache {
         )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        drop(conn);
         Ok(rows > 0)
     }
 
     /// 获取所有待上报的告警
     pub fn get_pending(&self, limit: usize) -> std::io::Result<Vec<CachedAlert>> {
-        let conn = rusqlite::Connection::open(&self.db_path)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let conn = self.conn.lock().unwrap();
 
         let mut stmt = conn
             .prepare("SELECT id, alert_key, agent_id, level, category, title, message, source, metadata, created_at, cached_at, uploaded, uploaded_at FROM alert_cache WHERE uploaded = 0 ORDER BY cached_at ASC LIMIT ?1")
@@ -159,8 +159,6 @@ impl AlertCache {
             }
         }
 
-        drop(stmt);
-        drop(conn);
         Ok(alerts)
     }
 
@@ -170,8 +168,7 @@ impl AlertCache {
             return Ok(());
         }
 
-        let conn = rusqlite::Connection::open(&self.db_path)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let conn = self.conn.lock().unwrap();
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -194,14 +191,12 @@ impl AlertCache {
         conn.execute(&sql, params.as_slice())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        drop(conn);
         Ok(())
     }
 
     /// 删除已上传的旧记录（保留7天）
     pub fn cleanup_uploaded(&self, retention_days: i64) -> std::io::Result<usize> {
-        let conn = rusqlite::Connection::open(&self.db_path)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let conn = self.conn.lock().unwrap();
 
         let cutoff = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -216,14 +211,12 @@ impl AlertCache {
             )
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        drop(conn);
         Ok(rows)
     }
 
     /// 获取缓存统计
     pub fn stats(&self) -> std::io::Result<CacheStats> {
-        let conn = rusqlite::Connection::open(&self.db_path)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let conn = self.conn.lock().unwrap();
 
         let total: i64 = conn
             .query_row("SELECT COUNT(*) FROM alert_cache", [], |r| r.get(0))
@@ -237,7 +230,6 @@ impl AlertCache {
             .query_row("SELECT COUNT(*) FROM alert_cache WHERE uploaded = 1", [], |r| r.get(0))
             .unwrap_or(0);
 
-        drop(conn);
         Ok(CacheStats {
             total,
             pending,

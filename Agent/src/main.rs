@@ -13,6 +13,7 @@ mod command;
 mod response;
 mod protocol;
 mod client;
+mod ws_client;
 mod securitylog;
 mod fim;
 mod webmalware;
@@ -20,6 +21,7 @@ mod webmalware;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use sysinfo::{Disks, Networks, System};
+use tokio::sync::mpsc;
 
 pub use process::{format_process_list, get_process_list, ProcessInfo, ProcessList};
 pub use service::{format_service_list, get_service_list, ServiceInfo, ServiceList};
@@ -36,6 +38,7 @@ pub use command::{CommandExecutor, CommandRequest, CommandResult, CommandWhiteli
 pub use response::{ResponseEngine, ResponseRule, ResponseAction, ResponseResult, ResponseLevel, format_response_results, format_response_rules};
 pub use protocol::{Message, MsgType, AgentInfo, HeartbeatData, ThreatReportPayload, CommandPayload, CommandResultPayload, ResponsePolicyPayload, EnvironmentInfo, DiskInfo, PortInfo, create_register_message, create_register_message_simple, create_heartbeat_message, create_threat_message, create_command_result_message, create_status_message};
 pub use client::{Client, ManagerConfig, ConnectionState, ClientError};
+pub use ws_client::{WssClient, WsConfig, WsConnectionState, WsMessage, FileChunk, WsMessageType};
 pub use securitylog::{LogCollector, LogEntry, LogLevel, SecurityEvent, SecurityEventType, format_security_events, format_log_entries};
 pub use fim::{FimMonitor, FimReport, MonitoredItem, FileSnapshot, FileChangeEvent, RiskLevel, format_fim_report, format_change_events};
 pub use webmalware::{WebMalwareScanner, MaliciousFileResult, MaliciousFileType, MalwareThreatLevel, ScanConfig, format_scan_results, format_single_result};
@@ -453,7 +456,6 @@ fn run_daemon_mode(config_path: String) {
         eprintln!("[xsec-agent] 配置文件读取失败: {}", e);
         std::process::exit(1);
     });
-    let config_content = std::fs::read_to_string(config_path).unwrap_or_default();
     
     // 简单的配置解析
     let manager_host = extract_config_value(&config_content, "host").unwrap_or("127.0.0.1".to_string());
@@ -461,7 +463,11 @@ fn run_daemon_mode(config_path: String) {
         .unwrap_or("8443".to_string())
         .parse()
         .unwrap_or(8443);
-    let secret_key = extract_config_value(&config_content, "secret_key").unwrap_or("qaz@7410".to_string());
+
+    // 安全修复: 强制要求配置文件中设置密钥，不使用默认值
+    let secret_key = extract_config_value(&config_content, "secret_key")
+        .expect("[xsec-agent] 错误: 配置文件中未设置 secret_key，Agent 必须配置密钥才能启动");
+
     let agent_id = extract_config_value(&config_content, "id")
         .unwrap_or_else(|| hostname::get().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
     
@@ -518,12 +524,10 @@ fn run_daemon_mode(config_path: String) {
     }
     
     // 主循环 - 发送心跳
+    let mut monitor = SystemMonitor::new();
     loop {
-        let mut monitor = SystemMonitor::new();
-        monitor.collect();
-        std::thread::sleep(std::time::Duration::from_secs(1));
         let metrics = monitor.collect();
-        
+
         let heartbeat_data = HeartbeatData {
             status: "online".to_string(),
             cpu_percent: metrics.cpu.usage_percent,
@@ -535,9 +539,9 @@ fn run_daemon_mode(config_path: String) {
             pending_commands: 0,
             environment_info: Some(monitor.collect_environment()),
         };
-        
+
         let heartbeat = create_heartbeat_message(&agent_id, heartbeat_data);
-        
+
         if let Err(e) = client.send_message(&heartbeat) {
             println!("[xsec-agent] 发送心跳失败: {:?}, 重新连接...", e);
             loop {
@@ -553,9 +557,113 @@ fn run_daemon_mode(config_path: String) {
                 }
             }
         }
-        
+
         std::thread::sleep(std::time::Duration::from_secs(30));
     }
+}
+
+// ============================================================================
+// WSS Daemon 模式 (Async)
+// ============================================================================
+
+async fn run_daemon_mode_wss(config_path: String) {
+    println!("[xsec-agent] 启动 WSS Daemon 模式...");
+    println!("[xsec-agent] 使用配置文件: {}", config_path);
+
+    // 读取配置
+    let config_content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[xsec-agent] 配置文件读取失败: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // 安全修复: 服务端地址硬编码，不允许配置修改
+    let server_url = "wss://center.xsec.dxp0rt.de5.net/ws";
+
+    let agent_id = extract_config_value(&config_content, "id")
+        .unwrap_or_else(|| hostname::get()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "unknown".to_string()));
+
+    // 安全修复: token 是必填的，不允许为空
+    let token = extract_config_value(&config_content, "token")
+        .expect("[xsec-agent] 错误: 配置文件中未设置 token，Agent 必须配置令牌才能启动");
+
+    if token.is_empty() {
+        eprintln!("[xsec-agent] 错误: token 不能为空");
+        std::process::exit(1);
+    }
+
+    let heartbeat_interval = extract_config_value(&config_content, "heartbeat_interval")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
+
+    println!("[xsec-agent] 服务器: {}", server_url);
+    println!("[xsec-agent] Agent ID: {}", agent_id);
+
+    // 创建 WSS 配置
+    let ws_config = WsConfig {
+        server_url,
+        agent_id: agent_id.clone(),
+        token,
+        heartbeat_interval_secs: heartbeat_interval,
+        reconnect_delay_secs: 5,
+        connection_timeout_secs: 10,
+    };
+
+    // 创建命令通道
+    let (command_tx, mut command_rx) = mpsc::channel::<CommandPayload>(100);
+
+    // 创建命令执行器
+    let command_executor = CommandExecutor::new();
+
+    // 创建 WSS 客户端
+    let client = Arc::new(WssClient::new(ws_config, command_tx));
+
+    // 克隆客户端用于命令处理
+    let client_for_commands = client.clone();
+
+    // 启动命令处理任务
+    tokio::spawn(async move {
+        while let Some(cmd) = command_rx.recv().await {
+            println!("[WSS] 收到待执行命令: {} {:?}", cmd.command, cmd.args);
+
+            // 执行命令
+            let request = CommandRequest {
+                id: cmd.id.clone(),
+                command: cmd.command.clone(),
+                args: cmd.args.clone(),
+                work_dir: cmd.work_dir,
+            };
+            let result = command_executor.execute(&request);
+
+            println!("[WSS] 命令执行完成: success={}", result.success);
+
+            // 发送命令结果 (通过 WSS 发送)
+            let result_payload = CommandResultPayload {
+                id: result.id.clone(),
+                success: result.success,
+                exit_code: result.exit_code,
+                stdout: result.stdout.clone(),
+                stderr: result.stderr.clone(),
+                duration_ms: result.duration_ms,
+                executed_at: result.executed_at,
+            };
+
+            let result_msg = crate::protocol::create_command_result_message(
+                &result_payload,
+            );
+
+            if let Err(e) = client_for_commands.send(&result_msg).await {
+                eprintln!("[WSS] 发送命令结果失败: {}", e);
+            }
+        }
+    });
+
+    // 启动 WSS 客户端
+    client_for_commands.run().await;
 }
 
 fn extract_config_value(content: &str, key: &str) -> Option<String> {
@@ -579,12 +687,18 @@ fn extract_config_value(content: &str, key: &str) -> Option<String> {
 // 主程序入口
 // ============================================================================
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    
+
     // 解析命令行参数
-    let mut config_path = "/etc/xsec/config.toml".to_string();
-    
+    // 安全修复: 使用跨平台配置路径
+    let mut config_path = if cfg!(target_os = "windows") {
+        "C:\\ProgramData\\xsec-agent\\config.toml".to_string()
+    } else {
+        "/etc/xsec-agent/config.toml".to_string()
+    };
+
     for (i, arg) in args.iter().enumerate() {
         if *arg == "--config" || *arg == "-c" {
             if i + 1 < args.len() {
@@ -592,10 +706,10 @@ fn main() {
             }
         }
     }
-    
+
     // 检查 daemon 模式
     if args.contains(&"--daemon".to_string()) || args.contains(&"-d".to_string()) {
-        run_daemon_mode(config_path);
+        run_daemon_mode_wss(config_path).await;
         return;
     }
     
@@ -750,13 +864,13 @@ fn show_injection() {
 
 fn show_network_monitoring() {
     println!("\n========== 进程网络监控 ==========");
-    let monitor = NetworkMonitor::new();
+    let mut monitor = NetworkMonitor::new();
     let sys = sysinfo::System::new_all();
-    
+
     // 显示网络信息
     let network_info = monitor.get_process_network_info(&sys);
     println!("{}", format_network_info(&network_info, Some(20)));
-    
+
     // 显示网络异常
     let alerts = monitor.detect_anomalies(&sys);
     println!("{}", format_network_alerts(&alerts));

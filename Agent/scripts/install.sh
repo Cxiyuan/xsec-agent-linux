@@ -61,32 +61,18 @@ interactive_config() {
     echo -e "${BLUE}  xsec-agent 配置${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo ""
-    
-    while true; do
-        read -p "请输入 Manager 服务端 IP 地址: " MANAGER_HOST
-        if [[ -z "$MANAGER_HOST" ]]; then
-            log_warn "地址不能为空"
-        elif [[ ! "$MANAGER_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            log_warn "请输入有效的 IP 地址"
-        else
-            break
-        fi
-    done
-    
-    read -p "请输入 Manager 服务端端口 [8443]: " MANAGER_PORT
-    MANAGER_PORT=${MANAGER_PORT:-8443}
-    
-    while true; do
-        read -s -p "请输入认证密钥: " SECRET_KEY
-        echo ""
-        if [[ -z "$SECRET_KEY" ]]; then
-            log_warn "密钥不能为空"
-        else
-            break
-        fi
-    done
-    
+    echo "服务端地址已硬编码: wss://center.xsec.dxp0rt.de5.net/ws"
+    echo ""
+
     read -p "请输入 Agent ID（留空自动生成）: " AGENT_ID
+    echo ""
+
+    # Token 是必需的，不输入则退出
+    read -p "请输入连接令牌（必填）: " TOKEN
+    if [[ -z "$TOKEN" ]]; then
+        log_error "令牌不能为空，安装退出"
+        exit 1
+    fi
     echo ""
 }
 
@@ -131,30 +117,20 @@ install_binary() {
 
 create_config() {
     log_info "创建配置文件..."
-    
+
     if [[ -z "$AGENT_ID" ]]; then
         AGENT_ID="agent-$(hostname)-$(date +%s)"
     fi
-    
+
     cat > "${CONFIG_DIR}/config.toml" << EOF
 [agent]
 id = "${AGENT_ID}"
 hostname = "$(hostname)"
-
-[manager]
-host = "${MANAGER_HOST}"
-port = ${MANAGER_PORT}
-
-[auth]
-secret_key = "${SECRET_KEY}"
+token = "${TOKEN}"
 
 [log]
 level = "info"
 path = "${LOG_DIR}/xsec-agent.log"
-
-[server]
-host = "0.0.0.0"
-port = 8443
 EOF
 
     chmod 640 "${CONFIG_DIR}/config.toml"

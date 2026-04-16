@@ -109,6 +109,8 @@ pub struct NetworkMonitor {
     suspicious_ip_patterns: Vec<(String, String)>, // (CIDR/pattern, description)
     /// 单进程最大连接数阈值
     max_connections_per_process: usize,
+    /// inode -> PID 缓存 (避免每次都遍历 /proc)
+    inode_pid_cache: HashMap<String, u32>,
 }
 
 impl NetworkMonitor {
@@ -153,12 +155,44 @@ impl NetworkMonitor {
             suspicious_ports,
             suspicious_ip_patterns,
             max_connections_per_process: 500,
+            inode_pid_cache: HashMap::new(),
+        }
+    }
+
+    /// 构建 inode -> PID 缓存 (只遍历一次 /proc)
+    fn build_inode_pid_cache(&mut self) {
+        self.inode_pid_cache.clear();
+        if let Ok(entries) = std::fs::read_dir("/proc") {
+            for entry in entries.filter_map(|e| e.ok()) {
+                if let Some(dir_name) = entry.file_name().to_str() {
+                    if let Ok(pid) = dir_name.parse::<u32>() {
+                        let fd_path = format!("/proc/{}/fd", pid);
+                        if let Ok(fd_entries) = std::fs::read_dir(&fd_path) {
+                            for fd_entry in fd_entries.filter_map(|e| e.ok()) {
+                                if let Ok(link) = std::fs::read_link(fd_entry.path()) {
+                                    let link_str = link.to_string_lossy();
+                                    // socket:[inode] 格式
+                                    if let Some(start) = link_str.find("socket:[") {
+                                        if let Some(end) = link_str.find("]", start) {
+                                            let inode = &link_str[start + 8..end];
+                                            self.inode_pid_cache.insert(inode.to_string(), pid);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// 获取所有进程的网络连接信息
-    pub fn get_process_network_info(&self, sys: &sysinfo::System) -> Vec<ProcessNetworkInfo> {
+    pub fn get_process_network_info(&mut self, sys: &sysinfo::System) -> Vec<ProcessNetworkInfo> {
         let mut results: HashMap<u32, ProcessNetworkInfo> = HashMap::new();
+
+        // 先构建 inode -> PID 缓存
+        self.build_inode_pid_cache();
 
         #[cfg(target_os = "linux")]
         {
@@ -186,7 +220,7 @@ impl NetworkMonitor {
     }
 
     /// 检测网络异常
-    pub fn detect_anomalies(&self, sys: &sysinfo::System) -> Vec<NetworkAlert> {
+    pub fn detect_anomalies(&mut self, sys: &sysinfo::System) -> Vec<NetworkAlert> {
         let process_info = self.get_process_network_info(sys);
         let mut alerts = Vec::new();
 
@@ -454,27 +488,8 @@ impl NetworkMonitor {
 
     #[cfg(target_os = "linux")]
     fn find_pid_by_inode(&self, inode: &str) -> Option<u32> {
-        // 遍历 /proc/*/fd/* 寻找匹配的socket inode
-        if let Ok(entries) = std::fs::read_dir("/proc") {
-            for entry in entries.filter_map(|e| e.ok()) {
-                if let Some(dir_name) = entry.file_name().to_str() {
-                    if let Ok(pid) = dir_name.parse::<u32>() {
-                        let fd_path = format!("/proc/{}/fd", pid);
-                        if let Ok(fd_entries) = std::fs::read_dir(&fd_path) {
-                            for fd_entry in fd_entries.filter_map(|e| e.ok()) {
-                                if let Ok(link) = std::fs::read_link(fd_entry.path()) {
-                                    let link_str = link.to_string_lossy();
-                                    if link_str.contains(&format!("socket:[{}]", inode)) {
-                                        return Some(pid);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
+        // 直接从缓存查找，避免每次遍历 /proc
+        self.inode_pid_cache.get(inode).copied()
     }
 
     // =========================================================================
@@ -701,18 +716,18 @@ mod tests {
 
     #[test]
     fn test_network_monitor() {
-        let monitor = NetworkMonitor::new();
+        let mut monitor = NetworkMonitor::new();
         let sys = sysinfo::System::new_all();
-        
+
         let info = monitor.get_process_network_info(&sys);
         assert!(info.len() >= 0);
     }
 
     #[test]
     fn test_detect_anomalies() {
-        let monitor = NetworkMonitor::new();
+        let mut monitor = NetworkMonitor::new();
         let sys = sysinfo::System::new_all();
-        
+
         let alerts = monitor.detect_anomalies(&sys);
         assert!(alerts.len() >= 0);
     }

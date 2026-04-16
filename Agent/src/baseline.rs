@@ -51,7 +51,26 @@ fn get_allowed_commands() -> HashSet<&'static str> {
 fn is_command_allowed(cmd: &str) -> bool {
     // 提取命令名称（第一个空格前的部分）
     let cmd_name = cmd.trim().split_whitespace().next().unwrap_or("");
-    get_allowed_commands().contains(cmd_name)
+    if !get_allowed_commands().contains(cmd_name) {
+        return false;
+    }
+
+    // 检查参数是否包含危险的 shell 元字符
+    let parts: Vec<&str> = cmd.trim().split_whitespace().collect();
+    if parts.len() > 1 {
+        let args = parts[1..].join(" ");
+        if contains_shell_metacharacters(&args) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// 检查字符串是否包含危险 shell 元字符
+fn contains_shell_metacharacters(s: &str) -> bool {
+    const DANGEROUS_CHARS: &[char] = &[';', '|', '&', '$', '`', '<', '>', '\n', '\r'];
+    s.chars().any(|c| DANGEROUS_CHARS.contains(&c))
 }
 
 /// 基线核查规则（由 Manager 下发）

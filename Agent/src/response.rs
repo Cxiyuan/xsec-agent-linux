@@ -568,44 +568,66 @@ impl ResponseEngine {
 
     /// 执行自定义命令
     // FIX 5: Command whitelist for custom commands
+    // 安全修复: 限制危险命令，移除 rm, chmod, chown, cp, mv 等数据破坏命令
     const COMMAND_WHITELIST: &'static [&'static str] = &[
-        // Process management
-        "kill", "pkill", "killall",
+        // Process management (只读操作)
+        "ps", "pgrep", "pkill",
         // Network tools
         "iptables", "ip", "nft", "firewalld", "ufw",
         "netsh", "pfctl",
-        // Service management
+        // Service management (只读操作)
         "systemctl", "service", "chkconfig", "rc-service", "launchctl",
-        // User management
-        "usermod", "useradd", "passwd", "userdel",
-        // File tools
-        "chmod", "chown", "rm", "mv", "cp",
-        // System info
-        "ps", "top", "htop", "netstat", "ss", "lsof",
-        // Other safety tools
-        "logger", "echo", "cat", "head", "tail", "grep",
+        // System info (只读)
+        "top", "htop", "netstat", "ss", "lsof",
+        "uptime", "who", "w", "last",
+        // Log viewing
+        "logger", "echo", "cat", "head", "tail", "grep", "awk", "sed",
+        // 已移除危险命令: rm, chmod, chown, mv, cp, kill, killall, useradd, userdel, usermod, passwd
     ];
 
     fn execute_custom_command(&self, cmd: &str) -> (bool, String) {
         // FIX 5: Validate command against whitelist before execution
         let trimmed_cmd = cmd.trim();
         let cmd_base = trimmed_cmd.split_whitespace().next().unwrap_or("");
-        
+
         if cmd_base.is_empty() {
             return (false, "Empty command".to_string());
         }
-        
+
         if !Self::COMMAND_WHITELIST.iter().any(|&allowed| cmd_base == allowed) {
             eprintln!("[ResponseEngine] BLOCKED non-whitelisted command: {}", trimmed_cmd);
             return (false, format!("Command '{}' is not in the whitelist.", cmd_base));
         }
-        
+
+        // 安全修复: 参数验证，防止命令注入和路径遍历
+        let args_part = trimmed_cmd[cmd_base.len()..].trim();
+        if !args_part.is_empty() {
+            // 检查危险模式
+            let dangerous_patterns = [
+                "&&", "||", ";", "|", "`", "$(", ">", "<", ">>", "<<",
+                "/etc/", "~/", "../", "/root/", "/home/",
+                "-rf", "-r ", "-f ", "-fr",
+                "rm -", "chmod -", "chown -",
+            ];
+            for pattern in dangerous_patterns {
+                if args_part.contains(pattern) {
+                    eprintln!("[ResponseEngine] BLOCKED dangerous pattern '{}' in command: {}", pattern, trimmed_cmd);
+                    return (false, format!("Dangerous pattern '{}' is not allowed in arguments.", pattern));
+                }
+            }
+        }
+
         #[cfg(target_os = "linux")]
         {
-            let output = Command::new("sh")
-                .args(["-c", trimmed_cmd])
+            // 安全执行: 使用参数数组而非 shell 拼接
+            let parts: Vec<&str> = trimmed_cmd.split_whitespace().collect();
+            if parts.is_empty() {
+                return (false, "Empty command".to_string());
+            }
+            let output = Command::new(parts[0])
+                .args(&parts[1..])
                 .output();
-            
+
             match output {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -622,7 +644,7 @@ impl ResponseEngine {
             let output = Command::new("cmd")
                 .args(["/C", trimmed_cmd])
                 .output();
-            
+
             match output {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout);

@@ -347,14 +347,25 @@ impl FimMonitor {
         })
     }
 
-    /// 计算文件哈希
+    /// 计算文件哈希 (分块读取，避免大文件内存压力)
     fn calculate_hash(&self, path: &Path) -> Option<String> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::Hasher;
-        
-        let content = fs::read(path).ok()?;
+        use std::io::{BufReader, Read};
+
+        let file = fs::File::open(path).ok()?;
+        let mut reader = BufReader::with_capacity(1024 * 1024, file); // 1MB buffer
         let mut hasher = DefaultHasher::new();
-        hasher.write(&content);
+        let mut buffer = [0u8; 8192];
+
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => hasher.write(&buffer[..n]),
+                Err(_) => return None, // I/O error
+            }
+        }
+
         Some(format!("{:x}", hasher.finish()))
     }
 

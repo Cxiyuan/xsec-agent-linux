@@ -274,8 +274,8 @@ $events | ConvertTo-Json -Compress
             {
                 if let Ok(stdout) = String::from_utf8(output.stdout) {
                     if let Ok(events) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                        if events.is_array() {
-                            for event in events.as_array().unwrap() {
+                        if let Some(arr) = events.as_array() {
+                            for event in arr {
                                 if let Some(mut entry) = self.parse_windows_event(event, log_name) {
                                     self.entries.push(entry);
                                 }
@@ -315,8 +315,8 @@ $events | ConvertTo-Json -Compress
         {
             if let Ok(stdout) = String::from_utf8(output.stdout) {
                 if let Ok(events) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                    if events.is_array() {
-                        for event in events.as_array().unwrap() {
+                    if let Some(arr) = events.as_array() {
+                        for event in arr {
                             if let Some(mut entry) = self.parse_windows_event(event, "PowerShell") {
                                 self.entries.push(entry);
                             }
@@ -349,8 +349,8 @@ $events | ConvertTo-Json -Compress
         {
             if let Ok(stdout) = String::from_utf8(output.stdout) {
                 if let Ok(events) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                    if events.is_array() {
-                        for event in events.as_array().unwrap() {
+                    if let Some(arr) = events.as_array() {
+                        for event in arr {
                             if let Some(mut entry) = self.parse_windows_event(event, "RDP") {
                                 self.entries.push(entry);
                             }

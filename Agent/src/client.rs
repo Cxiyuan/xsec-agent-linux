@@ -83,12 +83,13 @@ impl Client {
         )
         .map_err(|e| ClientError::ConnectionFailed(e.to_string()))?;
 
-        stream
-            .set_read_timeout(Some(Duration::from_secs(self.config.connection_timeout_secs)))
-            .ok();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(self.config.connection_timeout_secs)))
-            .ok();
+        // 设置超时（记录错误但不中断连接）
+        if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(self.config.connection_timeout_secs))) {
+            tracing::warn!("设置读超时失败: {}", e);
+        }
+        if let Err(e) = stream.set_write_timeout(Some(Duration::from_secs(self.config.connection_timeout_secs))) {
+            tracing::warn!("设置写超时失败: {}", e);
+        }
 
         *self.stream.lock().unwrap() = Some(stream);
 

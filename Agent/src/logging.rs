@@ -46,11 +46,11 @@ pub fn init_logging(config: &LogConfig) -> Result<(), Box<dyn std::error::Error>
             .create(true)
             .append(true)
             .open(&file_path)?;
-        
+
         let file_layer = fmt::layer()
-            .with_writer(move || file.try_clone().unwrap())
+            .with_writer(move || file.try_clone().expect("Failed to clone log file handle"))
             .with_ansi(false);
-        
+
         let stdout_layer = fmt::layer()
             .with_writer(std::io::stdout);
         
@@ -71,11 +71,11 @@ pub fn init_logging(config: &LogConfig) -> Result<(), Box<dyn std::error::Error>
             .create(true)
             .append(true)
             .open(&file_path)?;
-        
+
         let file_layer = fmt::layer()
-            .with_writer(move || file.try_clone().unwrap())
+            .with_writer(move || file.try_clone().expect("Failed to clone log file handle"))
             .with_ansi(false);
-        
+
         tracing_subscriber::registry()
             .with(filter)
             .with(file_layer)
