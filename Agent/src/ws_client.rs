@@ -12,12 +12,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::System;
 use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::Message, Connector};
-use tokio_tls::TlsConnector as TokioTlsConnector;
+use tokio_tungstenite::tungstenite::Message as WsRawMessage;
+use tokio_tungstenite::native_tls::connect_async;
 use url::Url;
 
 use crate::protocol::{
-    AgentInfo, CommandPayload, HeartbeatData, ManagerIncoming, Message,
+    AgentInfo, CommandPayload, HeartbeatData, ManagerIncoming,
     MessagePayload, ThreatReportPayload,
 };
 
@@ -178,7 +178,7 @@ impl WssClient {
 
     /// 创建接受自签名证书的 TLS 连接器
     /// 仅用于开发/测试环境，生产环境应使用受信任的证书
-    fn create_insecure_tls_connector(&self) -> Result<TokioTlsConnector, String> {
+    fn create_insecure_tls_connector(&self) -> Result<TlsConnector, String> {
         // 构建接受自签名证书的 native-tls 连接器
         let tls_connector = TlsConnector::builder()
             .danger_accept_invalid_certs(true)  // 接受自签名证书
@@ -186,9 +186,8 @@ impl WssClient {
             .build()
             .map_err(|e| format!("TLS 连接器创建失败: {}", e))?;
 
-        let connector = TokioTlsConnector::from(tls_connector);
         println!("[WSS] TLS 连接器已配置为接受自签名证书");
-        Ok(connector)
+        Ok(tls_connector)
     }
 
     /// 连接并处理消息
@@ -200,11 +199,10 @@ impl WssClient {
 
         // 创建接受自签名证书的 TLS 连接器
         let tls_connector = self.create_insecure_tls_connector()?;
-        let connector = Connector::NativeTls(tls_connector);
 
         let (ws_stream, _) = tokio::time::timeout(
             Duration::from_secs(self.config.connection_timeout_secs),
-            connect_async(url, Some(connector)),
+            connect_async(url, tls_connector),
         )
         .await
         .map_err(|_| "连接超时")?
@@ -218,7 +216,7 @@ impl WssClient {
         let register_msg = self.create_register_message();
         let json = serde_json::to_string(&register_msg)
             .map_err(|e| format!("JSON 序列化失败: {}", e))?;
-        write.send(Message::Text(json.into())).await
+        write.send(WsRawMessage::Text(json.into())).await
             .map_err(|e| format!("发送注册消息失败: {}", e))?;
 
         self.set_state(WsConnectionState::Authenticated);
@@ -237,20 +235,20 @@ impl WssClient {
                 // 接收消息
                 msg = read.next() => {
                     match msg {
-                        Some(Ok(Message::Text(text))) => {
+                        Some(Ok(WsRawMessage::Text(text))) => {
                             if let Err(e) = self.handle_message(&text.to_string()).await {
                                 eprintln!("[WSS] 消息处理错误: {}", e);
                             }
                         }
-                        Some(Ok(Message::Ping(data))) => {
+                        Some(Ok(WsRawMessage::Ping(data))) => {
                             // 自动响应 Pong
-                            write.send(Message::Pong(data)).await.ok();
+                            write.send(WsRawMessage::Pong(data)).await.ok();
                         }
-                        Some(Ok(Message::Close(_))) => {
+                        Some(Ok(WsRawMessage::Close(_))) => {
                             println!("[WSS] 服务端关闭连接");
                             break;
                         }
-                        Some(Ok(Message::Binary(data))) => {
+                        Some(Ok(WsRawMessage::Binary(data))) => {
                             // 处理二进制消息（如文件分片）
                             if let Err(e) = self.handle_binary(&data).await {
                                 eprintln!("[WSS] 二进制消息处理错误: {}", e);
@@ -269,7 +267,7 @@ impl WssClient {
                 }
                 // 处理待发送的消息
                 Some(json) = msg_rx.recv() => {
-                    if write.send(Message::Text(json.into())).await.is_err() {
+                    if write.send(WsRawMessage::Text(json.into())).await.is_err() {
                         println!("[WSS] 消息发送失败，连接可能已断开");
                         break;
                     }
@@ -278,7 +276,7 @@ impl WssClient {
                 _ = tokio::time::sleep(Duration::from_secs(30)) => {
                     let heartbeat = self.create_heartbeat_message();
                     if let Ok(json) = serde_json::to_string(&heartbeat) {
-                        if write.send(Message::Text(json.into())).await.is_err() {
+                        if write.send(WsRawMessage::Text(json.into())).await.is_err() {
                             break;
                         }
                     }

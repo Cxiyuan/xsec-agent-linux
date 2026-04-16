@@ -20,6 +20,7 @@ mod webmalware;
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use std::sync::Arc;
 use sysinfo::{Disks, Networks, System};
 use tokio::sync::mpsc;
 
@@ -605,7 +606,7 @@ async fn run_daemon_mode_wss(config_path: String) {
 
     // 创建 WSS 配置
     let ws_config = WsConfig {
-        server_url,
+        server_url: server_url.clone(),
         agent_id: agent_id.clone(),
         token,
         heartbeat_interval_secs: heartbeat_interval,
@@ -632,10 +633,12 @@ async fn run_daemon_mode_wss(config_path: String) {
 
             // 执行命令
             let request = CommandRequest {
-                id: cmd.id.clone(),
+                id: cmd.command_id.clone(),
                 command: cmd.command.clone(),
                 args: cmd.args.clone(),
-                work_dir: cmd.work_dir,
+                timeout_secs: cmd.timeout_secs,
+                user: "root".to_string(),
+                work_dir: None,
             };
             let result = command_executor.execute(&request);
 
