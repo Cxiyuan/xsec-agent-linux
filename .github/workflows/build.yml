@@ -21,7 +21,7 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ./ -> target
+          workspaces: ./Agent -> target
 
       - name: Build release
         run: |
