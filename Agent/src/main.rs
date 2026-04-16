@@ -606,7 +606,7 @@ async fn run_daemon_mode_wss(config_path: String) {
 
     // 创建 WSS 配置
     let ws_config = WsConfig {
-        server_url: server_url.clone(),
+        server_url: server_url.to_string(),
         agent_id: agent_id.clone(),
         token,
         heartbeat_interval_secs: heartbeat_interval,
@@ -646,13 +646,12 @@ async fn run_daemon_mode_wss(config_path: String) {
 
             // 发送命令结果 (通过 WSS 发送)
             let result_payload = CommandResultPayload {
-                id: result.id.clone(),
+                command_id: result.id.clone(),
                 success: result.success,
                 exit_code: result.exit_code,
                 stdout: result.stdout.clone(),
                 stderr: result.stderr.clone(),
                 duration_ms: result.duration_ms,
-                executed_at: result.executed_at,
             };
 
             let result_msg = crate::protocol::create_command_result_message(
