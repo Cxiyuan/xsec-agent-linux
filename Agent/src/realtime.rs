@@ -188,7 +188,7 @@ impl RealtimeMonitor {
 
         // 4. 网络异常检测
         if self.config.enable_network {
-            let monitor = NetworkMonitor::new();
+            let mut monitor = NetworkMonitor::new();
             let alerts = monitor.detect_anomalies(&sys);
             
             let high_alerts = alerts.iter()

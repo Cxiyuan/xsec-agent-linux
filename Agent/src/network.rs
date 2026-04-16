@@ -173,8 +173,9 @@ impl NetworkMonitor {
                                     let link_str = link.to_string_lossy();
                                     // socket:[inode] 格式
                                     if let Some(start) = link_str.find("socket:[") {
-                                        if let Some(end) = link_str.find("]", start) {
-                                            let inode = &link_str[start + 8..end];
+                                        let suffix = &link_str[start..];
+                                        if let Some(end_offset) = suffix.find(']') {
+                                            let inode = &link_str[start + 8..start + end_offset];
                                             self.inode_pid_cache.insert(inode.to_string(), pid);
                                         }
                                     }

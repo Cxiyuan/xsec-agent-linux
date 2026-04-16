@@ -654,9 +654,12 @@ async fn run_daemon_mode_wss(config_path: String) {
                 duration_ms: result.duration_ms,
             };
 
-            let result_msg = crate::protocol::create_command_result_message(
-                &result_payload,
-            );
+            // 使用 WsMessage 格式发送命令结果
+            let result_msg = WsMessage {
+                msg_type: ws_client::WsMessageType::CommandResult,
+                agent_id: Some(config.agent_id.clone()),
+                data: Some(serde_json::to_value(&result_payload).unwrap_or_default()),
+            };
 
             if let Err(e) = client_for_commands.send(&result_msg).await {
                 eprintln!("[WSS] 发送命令结果失败: {}", e);
