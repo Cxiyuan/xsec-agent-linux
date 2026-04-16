@@ -31,7 +31,6 @@ hmac-sha256 = "1"
 hex = "0.4"
 constant_time_eq = "0.3"
 rand = "0.8"
-http = "1"
 tokio-tungstenite = { version = "0.21", features = ["tokio-native-tls"] }
 native-tls = "0.2"
 tokio-native-tls = "0.3"

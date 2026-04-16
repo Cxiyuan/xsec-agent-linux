@@ -211,22 +211,10 @@ impl WssClient {
             .await
             .map_err(|e| format!("TLS 连接失败: {}", e))?;
 
-        // 构建 WebSocket 请求
-        let request = http::Request::builder()
-            .method(http::Method::GET)
-            .uri(url.as_str())
-            .header("Host", domain)
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::generate_key())
-            .body(())
-            .map_err(|e| format!("请求构建失败: {}", e))?;
-
-        // WebSocket 握手
-        let ws_stream = tokio::time::timeout(
+        // WebSocket 握手 (client_async 自动处理握手，直接传 URL)
+        let (ws_stream, _) = tokio::time::timeout(
             Duration::from_secs(self.config.connection_timeout_secs),
-            client_async(request, tls_stream),
+            client_async(url.as_str(), tls_stream),
         )
         .await
         .map_err(|_| "连接超时")?
