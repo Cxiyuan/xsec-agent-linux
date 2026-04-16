@@ -32,7 +32,7 @@ hex = "0.4"
 constant_time_eq = "0.3"
 rand = "0.8"
 webpki-roots = "0.26"
-rustls = { version = "0.23", features = ["dangerous"] }
+rustls = "0.23"
 tokio-rustls = "0.26"
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
 native-tls = "0.2"

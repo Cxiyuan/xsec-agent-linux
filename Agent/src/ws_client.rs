@@ -6,16 +6,16 @@
 //! 生产环境应使用 Let's Encrypt 证书
 
 use futures_util::{SinkExt, StreamExt};
-use rustls::{self, ClientConfig};
+use rustls::client::danger::ServerCertVerifier;
+use rustls::ClientConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::System;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio_rustls::{TlsConnector, client::TlsStream};
-use tokio_tungstenite::{client_async, tungstenite::Message as WsRawMessage, Protocol};
+use tokio_rustls::TlsConnector;
+use tokio_tungstenite::{client_async, tungstenite::Message as WsRawMessage};
 use url::Url;
 
 use crate::protocol::{
@@ -178,11 +178,11 @@ impl WssClient {
         }
     }
 
-    /// 创建接受自签名证书的 TLS 连接器 (rustls)
+    /// 创建接受自签名证书的 TLS 配置 (rustls 0.23)
     fn create_insecure_tls_config(&self) -> Result<ClientConfig, String> {
-        // 使用 rustls dangerous feature 跳过证书验证
+        // 使用 rustls 0.23 的 dangerous skip API
         let config = ClientConfig::builder()
-            .dangerously_skip_certificate_verification()
+            .with_custom_certificate_verifier(Arc::new(ServerCertVerifier::dangerously_skip_certificate_verification()))
             .with_no_client_auth();
         Ok(config)
     }
